@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { NewsArticle } from '../../types/news';
 import { useThemeColors } from '../../hooks/useThemeColors';
 import { useBookmarksStore } from '../../store/useBookmarksStore';
+import { useUserPreferences } from '../../store/userPreferences';
+import { getScaledTypography } from '../../theme/typography';
 import { SPACING, RADIUS } from '../../constants/theme';
 
 interface FeaturedNewsCardProps {
@@ -15,6 +17,9 @@ interface FeaturedNewsCardProps {
 export const FeaturedNewsCard: React.FC<FeaturedNewsCardProps> = ({ article, onPress }) => {
   const { colors, brandColors } = useThemeColors();
   const { isBookmarked, toggleBookmark } = useBookmarksStore();
+  const { fontSizeScaler, language } = useUserPreferences();
+  const script = language === 'hi' ? 'devanagari' : 'latin';
+  const typo = getScaledTypography(fontSizeScaler, script);
   const bookmarked = isBookmarked(article.id);
 
   return (
@@ -63,11 +68,31 @@ export const FeaturedNewsCard: React.FC<FeaturedNewsCardProps> = ({ article, onP
           </Text>
         </View>
 
-        <Text style={[styles.title, { color: colors.text }]} numberOfLines={3}>
+        <Text
+          style={[
+            styles.title,
+            {
+              color: colors.text,
+              fontSize: typo.heroHeadline.fontSize * 0.8,
+              lineHeight: typo.heroHeadline.lineHeight * 0.8,
+            },
+          ]}
+          numberOfLines={3}
+        >
           {article.title}
         </Text>
 
-        <Text style={[styles.summary, { color: colors.textSecondary }]} numberOfLines={2}>
+        <Text
+          style={[
+            styles.summary,
+            {
+              color: colors.textSecondary,
+              fontSize: typo.body.fontSize * 0.9,
+              lineHeight: typo.body.lineHeight * 0.9,
+            },
+          ]}
+          numberOfLines={2}
+        >
           {article.summary}
         </Text>
 

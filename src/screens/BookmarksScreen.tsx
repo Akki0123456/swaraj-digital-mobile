@@ -7,17 +7,23 @@ import { FlashList } from '@shopify/flash-list';
 import { RootStackParamList } from '../types/navigation';
 import { NewsArticle } from '../types/news';
 import { useBookmarksStore } from '../store/useBookmarksStore';
+import { useUserPreferences } from '../store/userPreferences';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { Header } from '../components/common/Header';
-import { NewsCard } from '../components/news/NewsCard';
+import { FeedItemCard } from '../components/FeedItemCard';
 import { SPACING, RADIUS } from '../constants/theme';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
+/**
+ * Saved Offline Records screen adhering to TC-MOB-03.
+ * Reads saved articles from persistent store for 100% offline reading resilience.
+ */
 export const BookmarksScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const { colors, brandColors } = useThemeColors();
-  const { bookmarks } = useBookmarksStore();
+  const { bookmarks, removeBookmark } = useBookmarksStore();
+  const { isOffline } = useUserPreferences();
 
   const handlePressArticle = (article: NewsArticle) => {
     navigation.navigate('ArticleDetail', { article });
@@ -30,7 +36,7 @@ export const BookmarksScreen: React.FC = () => {
       </View>
       <Text style={[styles.emptyTitle, { color: colors.text }]}>No Saved Articles Yet</Text>
       <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
-        Tap the bookmark icon on any news story to save it for offline reading anytime.
+        Tap the bookmark icon on any news story or video to save it for instant offline reading anytime.
       </Text>
     </View>
   );
@@ -43,13 +49,29 @@ export const BookmarksScreen: React.FC = () => {
         showSearch={false}
       />
 
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <Ionicons name="cloud-offline" size={16} color="#FFFFFF" />
+          <Text style={styles.offlineBannerText}>
+            Airplane / Offline Mode • All saved stories available locally
+          </Text>
+        </View>
+      )}
+
       <View style={styles.listContainer}>
         {bookmarks.length === 0 ? (
           renderEmpty()
         ) : (
           <FlashList
             data={bookmarks}
-            renderItem={({ item }) => <NewsCard article={item} onPress={handlePressArticle} />}
+            renderItem={({ item }) => (
+              <FeedItemCard
+                article={item}
+                onPress={handlePressArticle}
+                onBookmark={() => removeBookmark(item.id)}
+                isBookmarked={true}
+              />
+            )}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.listContent}
           />
@@ -66,8 +88,22 @@ const styles = StyleSheet.create({
   listContainer: {
     flex: 1,
   },
+  offlineBanner: {
+    backgroundColor: '#334155',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  offlineBannerText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
   listContent: {
-    paddingVertical: SPACING.md,
+    paddingVertical: SPACING.xs,
     paddingBottom: SPACING.xxl,
   },
   emptyWrapper: {

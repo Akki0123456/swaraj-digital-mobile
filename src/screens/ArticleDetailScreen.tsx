@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -6,7 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Share,
-  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,38 +16,61 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { useThemeColors } from '../hooks/useThemeColors';
 import { useBookmarksStore } from '../store/useBookmarksStore';
-import { useSettingsStore, FontSizeScale } from '../store/useSettingsStore';
+import { useUserPreferences } from '../store/userPreferences';
+import { getScaledTypography, BASE_BODY_SIZE, MAX_BODY_SIZE, MIN_BODY_SIZE } from '../theme/typography';
+import { useArticleDetailQuery } from '../api/feeds';
 import { MOCK_ARTICLES } from '../data/mockNews';
-import { NewsCard } from '../components/news/NewsCard';
+import { FeedItemCard } from '../components/FeedItemCard';
 import { SPACING, RADIUS } from '../constants/theme';
 
 type ArticleDetailRouteProp = RouteProp<RootStackParamList, 'ArticleDetail'>;
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
+/**
+ * Vernacular Reading Engine Adhering to TC-MOB-04
+ * Supports dynamic text scaler: Base (16px) to Max (26px) with zero text clipping.
+ * Deep linking target for swaraj://article/:id (TC-MOB-02).
+ */
 export const ArticleDetailScreen: React.FC = () => {
   const route = useRoute<ArticleDetailRouteProp>();
   const navigation = useNavigation<NavigationProp>();
-  const { article } = route.params;
+  const params = route.params || {};
 
-  const { colors, brandColors, fontSizes } = useThemeColors();
+  const articleId = params.article?.id || params.id || params.articleId || 'default-1';
+
+  // React Query fetch contract with offline disk cache
+  const { data: article, isLoading } = useArticleDetailQuery(articleId, params.article);
+
+  const { colors, brandColors } = useThemeColors();
   const { isBookmarked, toggleBookmark } = useBookmarksStore();
-  const { fontSize, setFontSize, audioSpeed, language } = useSettingsStore();
+  const {
+    fontSizeScaler,
+    setFontSizeScaler,
+    language,
+    audioSpeed,
+  } = useUserPreferences();
 
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [showTypographyControls, setShowTypographyControls] = useState(false);
 
-  const bookmarked = isBookmarked(article.id);
+  const script = language === 'hi' ? 'devanagari' : 'latin';
+  const typo = getScaledTypography(fontSizeScaler, script);
 
-  React.useEffect(() => {
+  const currentArticle = article || params.article;
+  const bookmarked = currentArticle ? isBookmarked(currentArticle.id) : false;
+
+  useEffect(() => {
     return () => {
       Speech.stop();
     };
   }, []);
 
   const handleShare = async () => {
+    if (!currentArticle) return;
     try {
       await Share.share({
-        title: article.title,
-        message: `${article.title}\n\nRead more on Swaraj Digital:\n${article.summary}`,
+        title: currentArticle.title,
+        message: `${currentArticle.title}\n\nRead more on Swaraj Digital:\nswaraj://article/${currentArticle.id}`,
       });
     } catch {
       // ignore
@@ -55,12 +78,13 @@ export const ArticleDetailScreen: React.FC = () => {
   };
 
   const handleToggleAudio = () => {
+    if (!currentArticle) return;
     if (isPlayingAudio) {
       Speech.stop();
       setIsPlayingAudio(false);
     } else {
       setIsPlayingAudio(true);
-      const textToSpeak = `${article.title}. ${article.summary}`;
+      const textToSpeak = `${currentArticle.title}. ${currentArticle.summary}`;
       Speech.speak(textToSpeak, {
         rate: audioSpeed,
         language: language === 'hi' ? 'hi-IN' : 'en-IN',
@@ -70,19 +94,56 @@ export const ArticleDetailScreen: React.FC = () => {
     }
   };
 
-  const handleCycleFontSize = () => {
-    const scales: FontSizeScale[] = ['sm', 'md', 'lg', 'xl'];
-    const currentIndex = scales.indexOf(fontSize);
-    const nextIndex = (currentIndex + 1) % scales.length;
-    setFontSize(scales[nextIndex]);
+  // Step text scaler: 16px -> 18px -> 21px -> 26px
+  const handleIncreaseFont = () => {
+    setFontSizeScaler(Math.min(MAX_BODY_SIZE, fontSizeScaler + 2));
   };
 
-  const relatedArticles = MOCK_ARTICLES.filter((a) => a.id !== article.id).slice(0, 3);
+  const handleDecreaseFont = () => {
+    setFontSizeScaler(Math.max(MIN_BODY_SIZE, fontSizeScaler - 2));
+  };
+
+  if (isLoading && !currentArticle) {
+    return (
+      <View style={[styles.loadingCenter, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={brandColors.primary} />
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+          Loading vernacular story...
+        </Text>
+      </View>
+    );
+  }
+
+  if (!currentArticle) {
+    return (
+      <View style={[styles.loadingCenter, { backgroundColor: colors.background }]}>
+        <Text style={[styles.loadingText, { color: colors.text }]}>Story not found.</Text>
+        <TouchableOpacity
+          style={[styles.backHomeBtn, { backgroundColor: brandColors.primary }]}
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.backHomeText}>Return to Feed</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const relatedArticles = MOCK_ARTICLES.filter((a) => a.id !== currentArticle.id).slice(0, 3);
+
+  // Parse summary bullet points (MongoDB schema: summaryBullets: string[])
+  const bullets = currentArticle.summary
+    ? currentArticle.summary.split('. ').filter(Boolean)
+    : [];
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Navigation Header */}
-      <View style={[styles.navHeader, { backgroundColor: colors.headerBg, borderBottomColor: colors.border }]}>
+      {/* Top Header Navigation */}
+      <View
+        style={[
+          styles.navHeader,
+          { backgroundColor: colors.headerBg, borderBottomColor: colors.border },
+        ]}
+      >
         <TouchableOpacity
           style={styles.navButton}
           onPress={() => navigation.goBack()}
@@ -93,19 +154,31 @@ export const ArticleDetailScreen: React.FC = () => {
         </TouchableOpacity>
 
         <View style={styles.navRightActions}>
+          {/* Vernacular Font Scaler Trigger (TC-MOB-04) */}
           <TouchableOpacity
-            style={[styles.fontButton, { backgroundColor: colors.tagBg, borderColor: colors.border }]}
-            onPress={handleCycleFontSize}
-            accessibilityLabel="Adjust font size"
+            style={[
+              styles.fontButton,
+              {
+                backgroundColor: showTypographyControls ? brandColors.primary : colors.tagBg,
+                borderColor: colors.border,
+              },
+            ]}
+            onPress={() => setShowTypographyControls(!showTypographyControls)}
+            accessibilityLabel="Adjust text scaler"
           >
-            <Text style={[styles.fontButtonText, { color: colors.text }]}>
-              A <Text style={{ fontSize: 10 }}>({fontSize.toUpperCase()})</Text>
+            <Text
+              style={[
+                styles.fontButtonText,
+                { color: showTypographyControls ? '#FFFFFF' : colors.text },
+              ]}
+            >
+              अ/A {fontSizeScaler}px
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.navButton}
-            onPress={() => toggleBookmark(article)}
+            onPress={() => toggleBookmark(currentArticle)}
             accessibilityLabel="Bookmark article"
           >
             <Ionicons
@@ -125,52 +198,107 @@ export const ArticleDetailScreen: React.FC = () => {
         </View>
       </View>
 
+      {/* Dynamic Typography Scaler HUD (TC-MOB-04: Base 16px to Max 26px reflow) */}
+      {showTypographyControls && (
+        <View style={[styles.typographyHUD, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.hudLabel, { color: colors.textSecondary }]}>
+            Vernacular Text Scaler (TC-MOB-04):
+          </Text>
+          <View style={styles.hudControls}>
+            <TouchableOpacity
+              style={[styles.hudBtn, { borderColor: colors.border }]}
+              onPress={handleDecreaseFont}
+              disabled={fontSizeScaler <= MIN_BODY_SIZE}
+            >
+              <Text style={[styles.hudBtnText, { color: colors.text }]}>A-</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.hudCurrentVal, { color: brandColors.primary }]}>
+              {fontSizeScaler}px {fontSizeScaler === BASE_BODY_SIZE ? '(Base)' : fontSizeScaler === MAX_BODY_SIZE ? '(Max)' : ''}
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.hudBtn, { borderColor: colors.border }]}
+              onPress={handleIncreaseFont}
+              disabled={fontSizeScaler >= MAX_BODY_SIZE}
+            >
+              <Text style={[styles.hudBtnText, { color: colors.text }]}>A+</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {/* Hero Image */}
+        {/* Cover Hero Image */}
         <View style={styles.imageContainer}>
           <Image
-            source={{ uri: article.imageUrl }}
+            source={{ uri: currentArticle.imageUrl }}
             style={styles.heroImage}
             contentFit="cover"
-            transition={300}
-            priority="high"
+            transition={250}
+            cachePolicy="memory-disk"
           />
           <View style={styles.imageOverlaySource}>
-            <Text style={styles.sourceText}>Source: {article.source}</Text>
+            <Text style={styles.sourceText}>Source: {currentArticle.source}</Text>
           </View>
         </View>
 
         <View style={styles.bodyWrapper}>
-          {/* Metadata */}
+          {/* Metadata Row */}
           <View style={styles.categoryRow}>
-            <View style={[styles.badge, { backgroundColor: brandColors.primary + '18' }]}>
-              <Text style={[styles.badgeText, { color: brandColors.primary }]}>
-                {article.category.toUpperCase()}
+            <View
+              style={[
+                styles.badge,
+                {
+                  backgroundColor: currentArticle.isBreaking
+                    ? '#FEE2E2'
+                    : brandColors.primary + '18',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.badgeText,
+                  { color: currentArticle.isBreaking ? '#DC2626' : brandColors.primary },
+                ]}
+              >
+                {currentArticle.isBreaking
+                  ? '🚨 BREAKING NEWS'
+                  : currentArticle.category.toUpperCase()}
               </Text>
             </View>
             <Text style={[styles.dot, { color: colors.textMuted }]}>•</Text>
-            <Text style={[styles.metaText, { color: colors.textSecondary }]}>{article.publishedAt}</Text>
+            <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+              {currentArticle.publishedAt}
+            </Text>
             <Text style={[styles.dot, { color: colors.textMuted }]}>•</Text>
             <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-              {article.readingTimeMinutes} min read
+              {currentArticle.readingTimeMinutes} min read
             </Text>
           </View>
 
-          {/* Headline */}
+          {/* Dynamic Headline reflowing dynamically without clipping */}
           <Text
             style={[
               styles.headline,
-              { color: colors.text, fontSize: fontSizes.headline, lineHeight: fontSizes.headline * 1.3 },
+              {
+                color: colors.text,
+                fontSize: typo.heroHeadline.fontSize,
+                lineHeight: typo.heroHeadline.lineHeight,
+              },
             ]}
           >
-            {article.title}
+            {currentArticle.title}
           </Text>
 
-          {/* Audio narration bar */}
+          {/* AI Narration Player Bar */}
           <TouchableOpacity
             style={[
               styles.audioBar,
-              { backgroundColor: isPlayingAudio ? brandColors.primary : colors.tagBg, borderColor: colors.border },
+              {
+                backgroundColor: isPlayingAudio ? brandColors.primary : colors.tagBg,
+                borderColor: colors.border,
+              },
             ]}
             onPress={handleToggleAudio}
             activeOpacity={0.85}
@@ -181,7 +309,9 @@ export const ArticleDetailScreen: React.FC = () => {
               color={isPlayingAudio ? '#FFFFFF' : brandColors.primary}
             />
             <View style={styles.audioTextGroup}>
-              <Text style={[styles.audioTitle, { color: isPlayingAudio ? '#FFFFFF' : colors.text }]}>
+              <Text
+                style={[styles.audioTitle, { color: isPlayingAudio ? '#FFFFFF' : colors.text }]}
+              >
                 {isPlayingAudio ? 'Playing Audio Summary...' : 'Listen to News (Audio Narration)'}
               </Text>
               <Text
@@ -190,44 +320,53 @@ export const ArticleDetailScreen: React.FC = () => {
                   { color: isPlayingAudio ? '#FFE4D6' : colors.textSecondary },
                 ]}
               >
-                AI text-to-speech audio reader • {article.readingTimeMinutes} mins
+                AI text-to-speech audio reader • {currentArticle.readingTimeMinutes} mins
               </Text>
             </View>
           </TouchableOpacity>
 
-          {/* Author info */}
-          <View style={[styles.authorCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            {article.authorAvatar ? (
-              <Image source={{ uri: article.authorAvatar }} style={styles.authorAvatar} />
-            ) : (
-              <View style={[styles.avatarFallback, { backgroundColor: brandColors.primary }]}>
-                <Text style={styles.avatarInitial}>{article.author[0]}</Text>
-              </View>
-            )}
-            <View style={styles.authorInfo}>
-              <Text style={[styles.authorName, { color: colors.text }]}>{article.author}</Text>
-              <Text style={[styles.authorRole, { color: colors.textSecondary }]}>
-                Senior Correspondent • {article.source}
+          {/* Summary Bullets (Section 4.1 Schema summaryBullets) */}
+          {bullets.length > 0 && (
+            <View
+              style={[
+                styles.summaryBulletsBox,
+                { backgroundColor: colors.tagBg, borderLeftColor: brandColors.primary },
+              ]}
+            >
+              <Text style={[styles.bulletsHeading, { color: brandColors.primary }]}>
+                मुख्य बिंदु (KEY HIGHLIGHTS)
               </Text>
+              {bullets.map((bullet, idx) => (
+                <View key={idx} style={styles.bulletItem}>
+                  <Text style={[styles.bulletDot, { color: brandColors.primary }]}>▪</Text>
+                  <Text
+                    style={[
+                      styles.bulletText,
+                      {
+                        color: colors.text,
+                        fontSize: typo.summaryBullet.fontSize,
+                        lineHeight: typo.summaryBullet.lineHeight,
+                      },
+                    ]}
+                  >
+                    {bullet.trim()}
+                  </Text>
+                </View>
+              ))}
             </View>
-          </View>
+          )}
 
-          {/* Summary Lead */}
-          <View style={[styles.summaryBox, { backgroundColor: colors.tagBg, borderLeftColor: brandColors.primary }]}>
-            <Text style={[styles.summaryText, { color: colors.textSecondary }]}>{article.summary}</Text>
-          </View>
-
-          {/* Full Article Body */}
+          {/* Vernacular Article Body with dynamic line-height reflow */}
           <View style={styles.contentContainer}>
-            {article.content.split('\n\n').map((paragraph, index) => (
+            {currentArticle.content.split('\n\n').map((paragraph, index) => (
               <Text
                 key={index}
                 style={[
                   styles.paragraph,
                   {
                     color: colors.text,
-                    fontSize: fontSizes.body,
-                    lineHeight: fontSizes.body * 1.65,
+                    fontSize: typo.body.fontSize,
+                    lineHeight: typo.body.lineHeight,
                   },
                 ]}
               >
@@ -240,10 +379,13 @@ export const ArticleDetailScreen: React.FC = () => {
           <View style={styles.tagsSection}>
             <Text style={[styles.tagsHeading, { color: colors.textSecondary }]}>TAGS</Text>
             <View style={styles.tagsRow}>
-              {article.tags.map((tag, idx) => (
+              {currentArticle.tags.map((tag, idx) => (
                 <View
                   key={idx}
-                  style={[styles.tagPill, { backgroundColor: colors.tagBg, borderColor: colors.border }]}
+                  style={[
+                    styles.tagPill,
+                    { backgroundColor: colors.tagBg, borderColor: colors.border },
+                  ]}
                 >
                   <Text style={[styles.tagPillText, { color: colors.tagText }]}>#{tag}</Text>
                 </View>
@@ -251,7 +393,7 @@ export const ArticleDetailScreen: React.FC = () => {
             </View>
           </View>
 
-          {/* Related Articles */}
+          {/* Related Stories */}
           <View style={[styles.relatedSection, { borderTopColor: colors.border }]}>
             <View style={styles.sectionHeadingRow}>
               <View style={[styles.headingIndicator, { backgroundColor: brandColors.primary }]} />
@@ -259,7 +401,7 @@ export const ArticleDetailScreen: React.FC = () => {
             </View>
 
             {relatedArticles.map((item) => (
-              <NewsCard
+              <FeedItemCard
                 key={item.id}
                 article={item}
                 onPress={(selected) => navigation.push('ArticleDetail', { article: selected })}
@@ -275,6 +417,25 @@ export const ArticleDetailScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  loadingCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  backHomeBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: RADIUS.sm,
+  },
+  backHomeText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   navHeader: {
     flexDirection: 'row',
@@ -293,14 +454,45 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   fontButton: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: RADIUS.xs,
     borderWidth: 1,
   },
   fontButtonText: {
     fontSize: 12,
+    fontWeight: '800',
+  },
+  typographyHUD: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderBottomWidth: 1,
+  },
+  hudLabel: {
+    fontSize: 12,
     fontWeight: '700',
+  },
+  hudControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  hudBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: RADIUS.xs,
+    borderWidth: 1,
+  },
+  hudBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  hudCurrentVal: {
+    fontSize: 13,
+    fontWeight: '800',
   },
   scrollContent: {
     paddingBottom: SPACING.xxl * 2,
@@ -379,55 +571,31 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
-  authorCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: SPACING.lg,
-    marginVertical: SPACING.md,
-    padding: SPACING.md,
-    borderRadius: RADIUS.md,
-    borderWidth: 1,
-  },
-  authorAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-  },
-  avatarFallback: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  authorInfo: {
-    marginLeft: SPACING.md,
-    flex: 1,
-  },
-  authorName: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  authorRole: {
-    fontSize: 12,
-    marginTop: 2,
-  },
-  summaryBox: {
+  summaryBulletsBox: {
     marginHorizontal: SPACING.lg,
     marginVertical: SPACING.sm,
     padding: SPACING.md,
     borderLeftWidth: 4,
     borderRadius: RADIUS.xs,
+    gap: 8,
   },
-  summaryText: {
-    fontSize: 15,
-    fontStyle: 'italic',
-    lineHeight: 22,
+  bulletsHeading: {
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  bulletItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  bulletDot: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  bulletText: {
+    flex: 1,
   },
   contentContainer: {
     paddingHorizontal: SPACING.lg,
@@ -435,7 +603,6 @@ const styles = StyleSheet.create({
   },
   paragraph: {
     marginBottom: 16,
-    letterSpacing: 0.1,
   },
   tagsSection: {
     paddingHorizontal: SPACING.lg,

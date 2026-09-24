@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabParamList } from '../types/navigation';
 import { HomeScreen } from '../screens/HomeScreen';
-import { CategoriesScreen } from '../screens/CategoriesScreen';
+import { VideoShortsScreen } from '../screens/VideoShortsScreen';
 import { VideosScreen } from '../screens/VideosScreen';
 import { BookmarksScreen } from '../screens/BookmarksScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -43,10 +43,10 @@ export const BottomTabNavigator: React.FC = () => {
 
           if (route.name === 'Feed') {
             iconName = focused ? 'newspaper' : 'newspaper-outline';
-          } else if (route.name === 'Categories') {
-            iconName = focused ? 'grid' : 'grid-outline';
+          } else if (route.name === 'Shorts') {
+            iconName = focused ? 'flash' : 'flash-outline';
           } else if (route.name === 'Videos') {
-            iconName = focused ? 'play-circle' : 'play-circle-outline';
+            iconName = focused ? 'tv' : 'tv-outline';
           } else if (route.name === 'Bookmarks') {
             iconName = focused ? 'bookmark' : 'bookmark-outline';
           } else if (route.name === 'Settings') {
@@ -63,14 +63,14 @@ export const BottomTabNavigator: React.FC = () => {
         options={{ tabBarLabel: 'Feed' }}
       />
       <Tab.Screen
-        name="Categories"
-        component={CategoriesScreen}
-        options={{ tabBarLabel: 'Beats' }}
+        name="Shorts"
+        component={VideoShortsScreen}
+        options={{ tabBarLabel: 'Shorts' }}
       />
       <Tab.Screen
         name="Videos"
         component={VideosScreen}
-        options={{ tabBarLabel: 'Videos' }}
+        options={{ tabBarLabel: 'Live & TV' }}
       />
       <Tab.Screen
         name="Bookmarks"

@@ -54,16 +54,18 @@ export const Header: React.FC<HeaderProps> = ({
           </View>
           <Text style={[styles.dateText, { color: colors.textSecondary }]}>{formattedDate}</Text>
         </View>
-        <Text style={styles.mainTitle}>
-          {title ? (
-            <Text style={[styles.customTitle, { color: colors.text }]}>{title}</Text>
-          ) : (
-            <>
-              <Text style={styles.titleSwaraj}>SWARAJ</Text>
-              <Text style={[styles.titleDigital, { color: colors.text }]}> DIGITAL</Text>
-            </>
-          )}
-        </Text>
+        {title ? (
+          <Text style={[styles.customTitle, { color: colors.text }]}>{title}</Text>
+        ) : (
+          <View style={styles.logoRow}>
+            <Image
+              source={require('../../../assets/swaraj-logo.png')}
+              style={styles.headerLogoImage}
+              contentFit="contain"
+              accessibilityLabel="Swaraj Digital Logo"
+            />
+          </View>
+        )}
         {subtitle && <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text>}
       </View>
 
@@ -174,6 +176,15 @@ const styles = StyleSheet.create({
   dateText: {
     fontSize: 12,
     fontWeight: '500',
+  },
+  logoRow: {
+    height: 38,
+    justifyContent: 'center',
+    marginVertical: 2,
+  },
+  headerLogoImage: {
+    width: 140,
+    height: 34,
   },
   mainTitle: {
     fontSize: 22,

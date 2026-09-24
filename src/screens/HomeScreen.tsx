@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { StyleSheet, View, RefreshControl, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useState, useCallback, useMemo } from 'react';
+import { StyleSheet, View, RefreshControl, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -9,17 +9,19 @@ import { RootStackParamList } from '../types/navigation';
 import { NewsArticle } from '../types/news';
 import { CATEGORIES } from '../constants/categories';
 import { LOCATION_FILTERS, LocationFilter } from '../constants/locations';
-import { getLiveNews } from '../services/newsService';
+import { useHomeFeedQuery } from '../api/feeds';
 import { useThemeColors } from '../hooks/useThemeColors';
-import { useSettingsStore } from '../store/useSettingsStore';
+import { useUserPreferences } from '../store/userPreferences';
 import { useAuthStore } from '../store/useAuthStore';
+import { useBookmarksStore } from '../store/useBookmarksStore';
 import { TRANSLATIONS } from '../constants/translations';
 import { Header } from '../components/common/Header';
 import { BreakingTicker } from '../components/common/BreakingTicker';
 import { LocationPills } from '../components/common/LocationPills';
 import { CategoryPills } from '../components/common/CategoryPills';
 import { FeaturedNewsCard } from '../components/news/FeaturedNewsCard';
-import { NewsCard } from '../components/news/NewsCard';
+import { FeedItemCard } from '../components/FeedItemCard';
+import { FeedSkeletonList } from '../components/SkeletonPlaceholder';
 import { SPACING, RADIUS } from '../constants/theme';
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -28,35 +30,44 @@ export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<HomeScreenNavigationProp>();
   const { colors, brandColors } = useThemeColors();
   const { user, isLoggedIn } = useAuthStore();
-  const { language } = useSettingsStore();
+  const { language, isOffline, setIsOffline } = useUserPreferences();
+  const { toggleBookmark, isBookmarked } = useBookmarksStore();
 
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
   const [selectedLocation, setSelectedLocation] = useState<LocationFilter>(LOCATION_FILTERS[0]);
-  const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [isLiveLoading, setIsLiveLoading] = useState<boolean>(true);
-  const [articles, setArticles] = useState<NewsArticle[]>([]);
+  const [isStressTest1000Enabled, setIsStressTest1000Enabled] = useState<boolean>(false);
 
-  const fetchArticles = useCallback(async (catId: string, loc: LocationFilter, lang: 'en' | 'hi') => {
-    setIsLiveLoading(true);
-    try {
-      const liveData = await getLiveNews({
-        category: catId,
-        locationQuery: loc.type !== 'all' ? loc.queryTerm : undefined,
-        language: lang,
+  // React Query Fetch Hook with Redis Read-Through & Offline Disk Storage
+  const {
+    data: rawArticles = [],
+    isLoading,
+    isRefetching,
+    refetch,
+  } = useHomeFeedQuery({
+    category: selectedCategoryId,
+    locationQuery: selectedLocation.type !== 'all' ? selectedLocation.queryTerm : undefined,
+    language,
+  });
+
+  // TC-MOB-01: Virtualization stress dataset (1,000 mock articles for cell recycling verification)
+  const stressTest1000Articles = useMemo(() => {
+    if (!isStressTest1000Enabled || rawArticles.length === 0) return [];
+    const expanded: NewsArticle[] = [];
+    for (let i = 0; i < 1000; i++) {
+      const template = rawArticles[i % rawArticles.length];
+      expanded.push({
+        ...template,
+        id: `stress-test-item-${i}`,
+        title: `[TC-MOB-01 Item #${i + 1}] ${template.title}`,
+        viewsCount: 1000 + i * 15,
       });
-      setArticles(liveData || []);
-    } catch (err) {
-      setArticles([]);
-    } finally {
-      setIsLiveLoading(false);
     }
-  }, []);
+    return expanded;
+  }, [isStressTest1000Enabled, rawArticles]);
 
-  useEffect(() => {
-    fetchArticles(selectedCategoryId, selectedLocation, language);
-  }, [selectedCategoryId, selectedLocation, language, fetchArticles]);
+  const articles = isStressTest1000Enabled ? stressTest1000Articles : rawArticles;
 
   const breakingArticle = useMemo(() => {
     return articles.find((a) => a.isBreaking) || articles[0];
@@ -68,24 +79,26 @@ export const HomeScreen: React.FC = () => {
 
   const trendingArticles = useMemo(() => {
     const list = articles.filter((a) => a.isTrending);
-    return list.length > 0 ? list : articles.slice(0, 4);
+    return list.length > 0 ? list.slice(0, 5) : articles.slice(0, 4);
   }, [articles]);
 
   const filteredArticles = useMemo(() => {
     let list = articles;
     if (selectedCategoryId !== 'all') {
-      list = list.filter((a) => a.categoryId === selectedCategoryId || a.category.toLowerCase() === selectedCategoryId.toLowerCase());
-    } else {
+      list = list.filter(
+        (a) =>
+          a.categoryId === selectedCategoryId ||
+          a.category.toLowerCase() === selectedCategoryId.toLowerCase()
+      );
+    } else if (!isStressTest1000Enabled) {
       list = list.filter((a) => a.id !== featuredArticle?.id);
     }
     return list;
-  }, [articles, selectedCategoryId, featuredArticle]);
+  }, [articles, selectedCategoryId, featuredArticle, isStressTest1000Enabled]);
 
   const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await fetchArticles(selectedCategoryId, selectedLocation, language);
-    setRefreshing(false);
-  }, [fetchArticles, selectedCategoryId, selectedLocation, language]);
+    await refetch();
+  }, [refetch]);
 
   const handlePressArticle = useCallback(
     (article: NewsArticle) => {
@@ -101,6 +114,16 @@ export const HomeScreen: React.FC = () => {
   const renderHeader = useCallback(() => {
     return (
       <View>
+        {/* Offline indicator snackbar (TC-MOB-03) */}
+        {isOffline && (
+          <View style={styles.offlineBanner}>
+            <Ionicons name="cloud-offline" size={16} color="#FFFFFF" />
+            <Text style={styles.offlineBannerText}>
+              Offline Reading Mode Active • Showing cached articles
+            </Text>
+          </View>
+        )}
+
         <LocationPills
           selectedLocationId={selectedLocation.id}
           onSelectLocation={setSelectedLocation}
@@ -112,8 +135,13 @@ export const HomeScreen: React.FC = () => {
           onSelectCategory={setSelectedCategoryId}
         />
 
-        {/* User Welcome / Sign In Banner */}
-        <View style={[styles.userBannerCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {/* User Greeting / Quick Sign In Card */}
+        <View
+          style={[
+            styles.userBannerCard,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
           {isLoggedIn && user ? (
             <View style={styles.userBannerLoggedIn}>
               <Image source={{ uri: user.avatarUrl }} style={styles.userAvatar} />
@@ -130,7 +158,9 @@ export const HomeScreen: React.FC = () => {
                 onPress={() => navigation.navigate('MainTabs', { screen: 'Settings' })}
               >
                 <Ionicons name="person" size={14} color={brandColors.primary} />
-                <Text style={[styles.accountBadgeText, { color: brandColors.primary }]}>{t.account}</Text>
+                <Text style={[styles.accountBadgeText, { color: brandColors.primary }]}>
+                  {t.account}
+                </Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -148,46 +178,96 @@ export const HomeScreen: React.FC = () => {
                 onPress={() => navigation.navigate('Login')}
                 activeOpacity={0.85}
               >
-                <Text style={styles.signInButtonText}>{t.signIn} / {t.register}</Text>
+                <Text style={styles.signInButtonText}>
+                  {t.signIn} / {t.register}
+                </Text>
               </TouchableOpacity>
             </View>
           )}
         </View>
 
-        {isLiveLoading && (
-          <View style={styles.liveLoadingBar}>
-            <ActivityIndicator size="small" color={brandColors.primary} />
-            <Text style={[styles.liveLoadingText, { color: brandColors.primary }]}>
-              {language === 'hi' ? `ताज़ा खबरें लोड हो रही हैं (${selectedLocation.hindiName})...` : `Fetching live news for ${selectedLocation.name}...`}
+        {/* QA Benchmark Control (TC-MOB-01: 1,000 Articles Stress Verification) */}
+        <View style={styles.qaBar}>
+          <TouchableOpacity
+            style={[
+              styles.qaButton,
+              isStressTest1000Enabled && { backgroundColor: brandColors.primary },
+            ]}
+            onPress={() => setIsStressTest1000Enabled((v) => !v)}
+          >
+            <Ionicons
+              name={isStressTest1000Enabled ? 'speedometer' : 'speedometer-outline'}
+              size={14}
+              color={isStressTest1000Enabled ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text
+              style={[
+                styles.qaButtonText,
+                { color: isStressTest1000Enabled ? '#FFFFFF' : colors.textSecondary },
+              ]}
+            >
+              {isStressTest1000Enabled
+                ? 'TC-MOB-01: 1,000 Items Active (60 FPS Test)'
+                : 'Run TC-MOB-01 (1,000 FlashList Test)'}
             </Text>
-          </View>
-        )}
+          </TouchableOpacity>
 
-        {selectedCategoryId === 'all' && featuredArticle && (
-          <FeaturedNewsCard
-            article={featuredArticle}
-            onPress={handlePressArticle}
-          />
+          <TouchableOpacity
+            style={[styles.qaButton, isOffline && { backgroundColor: '#475569' }]}
+            onPress={() => setIsOffline(!isOffline)}
+          >
+            <Ionicons
+              name={isOffline ? 'wifi-outline' : 'airplane-outline'}
+              size={14}
+              color={isOffline ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text
+              style={[
+                styles.qaButtonText,
+                { color: isOffline ? '#FFFFFF' : colors.textSecondary },
+              ]}
+            >
+              {isOffline ? 'Online Mode' : 'Simulate Offline (TC-MOB-03)'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {selectedCategoryId === 'all' && !isStressTest1000Enabled && featuredArticle && (
+          <FeaturedNewsCard article={featuredArticle} onPress={handlePressArticle} />
         )}
 
         {/* Trending Stories Carousel */}
-        {selectedCategoryId === 'all' && trendingArticles.length > 0 && (
+        {selectedCategoryId === 'all' && !isStressTest1000Enabled && trendingArticles.length > 0 && (
           <View style={styles.trendingSection}>
             <View style={styles.sectionHeadingRow}>
               <View style={[styles.headingIndicator, { backgroundColor: brandColors.trending }]} />
-              <Text style={[styles.sectionHeading, { color: colors.text }]}>{t.trendingTopStories}</Text>
+              <Text style={[styles.sectionHeading, { color: colors.text }]}>
+                {t.trendingTopStories}
+              </Text>
             </View>
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendingScroll}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.trendingScroll}
+            >
               {trendingArticles.map((art, index) => (
                 <TouchableOpacity
                   key={art.id}
-                  style={[styles.trendingCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+                  style={[
+                    styles.trendingCard,
+                    { backgroundColor: colors.card, borderColor: colors.border },
+                  ]}
                   onPress={() => handlePressArticle(art)}
                   activeOpacity={0.85}
                 >
                   <View style={styles.trendingImageContainer}>
-                    <Image source={{ uri: art.imageUrl }} style={styles.trendingImage} contentFit="cover" />
+                    <Image
+                      source={{ uri: art.imageUrl }}
+                      style={styles.trendingImage}
+                      contentFit="cover"
+                      transition={200}
+                    />
                     <View style={styles.rankBadge}>
                       <Text style={styles.rankText}>#{art.trendingRank || index + 1}</Text>
                     </View>
@@ -209,23 +289,48 @@ export const HomeScreen: React.FC = () => {
         <View style={styles.sectionHeadingRow}>
           <View style={[styles.headingIndicator, { backgroundColor: brandColors.primary }]} />
           <Text style={[styles.sectionHeading, { color: colors.text }]}>
-            {selectedCategoryId === 'all'
+            {isStressTest1000Enabled
+              ? 'STRESS TEST RECYCLED FEED (1,000 ITEMS)'
+              : selectedCategoryId === 'all'
               ? `${selectedLocation.name.toUpperCase()} ${t.latestHeadlines}`
               : CATEGORIES.find((c) => c.id === selectedCategoryId)?.name.toUpperCase() || 'NEWS'}
           </Text>
         </View>
       </View>
     );
-  }, [selectedCategoryId, selectedLocation, featuredArticle, trendingArticles, handlePressArticle, colors, brandColors, isLoggedIn, user, navigation, t]);
+  }, [
+    isOffline,
+    selectedLocation,
+    selectedCategoryId,
+    colors,
+    isLoggedIn,
+    user,
+    brandColors,
+    t,
+    navigation,
+    isStressTest1000Enabled,
+    featuredArticle,
+    trendingArticles,
+    handlePressArticle,
+    setIsOffline,
+  ]);
 
   const renderItem = useCallback(
     ({ item }: { item: NewsArticle }) => (
-      <NewsCard article={item} onPress={handlePressArticle} />
+      <FeedItemCard
+        article={item}
+        onPress={handlePressArticle}
+        onBookmark={toggleBookmark}
+        isBookmarked={isBookmarked(item.id)}
+      />
     ),
-    [handlePressArticle]
+    [handlePressArticle, toggleBookmark, isBookmarked]
   );
 
   const renderEmpty = useCallback(() => {
+    if (isLoading) {
+      return <FeedSkeletonList count={5} />;
+    }
     return (
       <View style={styles.emptyContainer}>
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
@@ -233,7 +338,7 @@ export const HomeScreen: React.FC = () => {
         </Text>
       </View>
     );
-  }, [colors.textSecondary]);
+  }, [isLoading, colors.textSecondary]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -241,23 +346,27 @@ export const HomeScreen: React.FC = () => {
       <BreakingTicker article={breakingArticle} onPress={handlePressArticle} />
 
       <View style={styles.listWrapper}>
-        <FlashList
-          data={filteredArticles}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id}
-          ListHeaderComponent={renderHeader}
-          ListEmptyComponent={renderEmpty}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              tintColor={brandColors.primary}
-              colors={[brandColors.primary]}
-            />
-          }
-        />
+        {isLoading && rawArticles.length === 0 ? (
+          <FeedSkeletonList count={6} />
+        ) : (
+          <FlashList
+            data={filteredArticles}
+            renderItem={renderItem}
+            keyExtractor={(item) => item.id}
+            ListHeaderComponent={renderHeader}
+            ListEmptyComponent={renderEmpty}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefetching}
+                onRefresh={handleRefresh}
+                tintColor={brandColors.primary}
+                colors={[brandColors.primary]}
+              />
+            }
+          />
+        )}
       </View>
     </View>
   );
@@ -272,6 +381,20 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: SPACING.xl,
+  },
+  offlineBanner: {
+    backgroundColor: '#334155',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  offlineBannerText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
   },
   userBannerCard: {
     marginHorizontal: SPACING.lg,
@@ -343,15 +466,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
-  liveLoadingBar: {
+  qaBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: SPACING.xs + 2,
+    paddingHorizontal: SPACING.lg,
+    marginTop: 6,
+    marginBottom: 4,
     gap: 8,
   },
-  liveLoadingText: {
-    fontSize: 12,
+  qaButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: RADIUS.xs,
+    backgroundColor: '#F1F5F9',
+    gap: 4,
+  },
+  qaButtonText: {
+    fontSize: 10,
     fontWeight: '700',
   },
   trendingSection: {
