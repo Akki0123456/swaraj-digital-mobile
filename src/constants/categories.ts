@@ -1,0 +1,68 @@
+import { NewsCategory } from '../types/news';
+
+export const CATEGORIES: NewsCategory[] = [
+  {
+    id: 'all',
+    name: 'Top Stories',
+    marathiName: 'प्रमुख बातम्या',
+    icon: 'newspaper-outline',
+    description: 'The most important headlines and developing stories today.',
+    color: '#E65100',
+  },
+  {
+    id: 'politics',
+    name: 'Politics',
+    marathiName: 'राजकारण',
+    icon: 'megaphone-outline',
+    description: 'National and state political developments, elections and policy.',
+    color: '#7C3AED',
+  },
+  {
+    id: 'state',
+    name: 'State & Regional',
+    marathiName: 'महाराष्ट्र व राज्य',
+    icon: 'map-outline',
+    description: 'Ground reports, district headlines, and regional affairs.',
+    color: '#0284C7',
+  },
+  {
+    id: 'krishi',
+    name: 'Krishi & Farming',
+    marathiName: 'कृषी व शेती',
+    icon: 'leaf-outline',
+    description: 'Market mandi rates, weather forecast, crop advisories and schemes.',
+    color: '#16A34A',
+  },
+  {
+    id: 'business',
+    name: 'Business',
+    marathiName: 'अर्थविश्व',
+    icon: 'trending-up-outline',
+    description: 'Stock markets, startups, banking, gold prices and fiscal insights.',
+    color: '#D97706',
+  },
+  {
+    id: 'technology',
+    name: 'Tech & Digital',
+    marathiName: 'तंत्रज्ञान',
+    icon: 'hardware-chip-outline',
+    description: 'AI revolutions, gadgets, telecom 5G, and cyber vigilance.',
+    color: '#4F46E5',
+  },
+  {
+    id: 'sports',
+    name: 'Sports',
+    marathiName: 'क्रीडा',
+    icon: 'football-outline',
+    description: 'Cricket IPL, international tournaments, athletes and match analysis.',
+    color: '#DC2626',
+  },
+  {
+    id: 'entertainment',
+    name: 'Entertainment',
+    marathiName: 'मनोरंजन',
+    icon: 'film-outline',
+    description: 'Cinema, OTT releases, reviews and celebrity spotlights.',
+    color: '#DB2777',
+  },
+];
